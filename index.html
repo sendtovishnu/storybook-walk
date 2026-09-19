@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Storybook Walk</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600&family=Lora:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --cream: #f6efe3; --paper: #fbf6ec; --ink: #3a3145; --ink-soft: #6b6278;
+      --night: #1d2340; --night2: #2f3260; --rose: #f2a2b1; --butter: #f7e08a;
+      --lavender: #c9b6e8; --mint: #a8e6cf; --peach: #f7c59f;
+      --pixel: 'Pixelify Sans', monospace; --serif: 'Lora', Georgia, serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      font-family: var(--serif); color: var(--ink);
+      background: radial-gradient(1200px 700px at 50% 0%, #3b3f78 0%, var(--night2) 40%, var(--night) 100%);
+      overflow: hidden;
+    }
+    .hidden { display: none !important; }
+
+    #app { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+    #board { display: flex; align-items: center; gap: 18px; transform-origin: center center; }
+    #stage { position: relative; width: 960px; height: 576px; border-radius: 14px; overflow: hidden;
+      box-shadow: 0 30px 80px rgba(0,0,0,.55), 0 0 0 4px rgba(255,255,255,.06); background: #0f1228; flex: none; }
+    #game canvas { display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
+
+    /* narration panel (explore) */
+    #narration { position: absolute; left: 24px; right: 24px; bottom: 18px; padding: 14px 20px 12px;
+      background: var(--paper); color: var(--ink); border-radius: 10px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.35), inset 0 0 0 1px rgba(58,49,69,.12);
+      background-image: repeating-linear-gradient(0deg, rgba(58,49,69,.025) 0 1px, transparent 1px 7px);
+      font-size: 17px; line-height: 1.5; transform: translateY(0); transition: transform .5s ease, opacity .5s ease; }
+    #narration.tucked { transform: translateY(calc(100% - 30px)); opacity: .95; cursor: pointer; }
+    #narration.tucked:hover { transform: translateY(0); }
+    #narration-page { font-family: var(--pixel); font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 4px; }
+    #narration-text { margin: 0; min-height: 52px; }
+    #narration-hint { font-family: var(--pixel); font-size: 12px; color: var(--ink-soft); margin-top: 6px; opacity: .8; }
+
+    /* prop speech bubble */
+    #bubble { position: absolute; max-width: 260px; padding: 8px 12px; background: var(--paper); color: var(--ink);
+      border-radius: 10px; font-size: 14px; line-height: 1.35; font-style: italic; pointer-events: none;
+      box-shadow: 0 6px 18px rgba(0,0,0,.35); transform: translate(-50%, -100%); opacity: 0; transition: opacity .25s ease; }
+    #bubble.on { opacity: 1; }
+    #bubble::after { content: ''; position: absolute; left: 50%; bottom: -6px; width: 10px; height: 10px; background: var(--paper);
+      transform: translateX(-50%) rotate(45deg); }
+
+    #fade { position: absolute; inset: 0; background: #0b0d1c; opacity: 0; pointer-events: none; transition: opacity .6s ease; }
+    #fade.on { opacity: 1; pointer-events: all; }
+
+    /* paint sidebar */
+    #sidebar { width: 250px; height: 576px; background: var(--paper); border-radius: 14px; padding: 16px 16px 14px;
+      display: flex; flex-direction: column; gap: 10px; box-shadow: 0 30px 80px rgba(0,0,0,.45); flex: none;
+      background-image: repeating-linear-gradient(0deg, rgba(58,49,69,.025) 0 1px, transparent 1px 7px); }
+    .side-head { display: flex; justify-content: space-between; align-items: baseline; font-family: var(--pixel); }
+    #side-page { font-size: 15px; font-weight: 600; }
+    #side-mood { font-size: 12px; color: var(--ink-soft); }
+    #side-text { margin: 0; font-size: 13px; line-height: 1.45; max-height: 96px; overflow: auto; color: var(--ink); flex: none; }
+    #side-hint { font-family: var(--pixel); font-size: 12px; color: var(--ink-soft); }
+    #palette { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; flex: 1; min-height: 0; overflow-y: auto; align-content: start; }
+    .swatch { border: 2px solid transparent; background: rgba(58,49,69,.06); border-radius: 8px; padding: 4px 2px 2px; cursor: pointer;
+      display: flex; flex-direction: column; align-items: center; gap: 2px; font-family: var(--pixel); font-size: 10px; color: var(--ink-soft); }
+    .swatch canvas { width: 32px; height: 32px; image-rendering: pixelated; }
+    .swatch.tall canvas { height: 32px; width: 16px; }
+    .swatch:hover { background: rgba(58,49,69,.12); }
+    .swatch.selected { border-color: var(--ink); background: var(--butter); color: var(--ink); }
+    .swatch.suggested::after { content: '✦'; position: absolute; }
+    .swatch { position: relative; }
+    .swatch .star { position: absolute; top: 1px; right: 4px; color: #d9a521; font-size: 11px; }
+    .side-actions { display: flex; gap: 6px; }
+    .side-actions button { padding: 9px 8px; font-size: 13px; flex: 1; white-space: nowrap; }
+    button { font-family: var(--pixel); font-size: 14px; border: 0; border-radius: 8px; padding: 9px 14px; cursor: pointer;
+      background: rgba(58,49,69,.1); color: var(--ink); }
+    button:hover { background: rgba(58,49,69,.18); }
+    button.primary { background: var(--ink); color: var(--cream); padding: 11px 16px; font-size: 15px; }
+    button.primary:hover { background: #4d4260; }
+    button:disabled { opacity: .5; cursor: default; }
+
+    /* overlays */
+    .overlay { position: fixed; inset: 0; display: flex; align-items: safe center; justify-content: center; z-index: 10; overflow-y: auto;
+      background: radial-gradient(1200px 700px at 50% 0%, #3b3f78 0%, var(--night2) 40%, var(--night) 100%); }
+    .title-card { position: relative; width: 560px; max-width: 92vw; padding: 28px 40px 28px; margin: 12px 0; text-align: center; color: var(--cream); }
+    h1 { font-family: var(--pixel); font-weight: 600; font-size: clamp(30px, 7vw, 54px); margin: 0 0 6px; letter-spacing: .02em;
+      text-shadow: 0 0 24px rgba(247,224,138,.35), 0 4px 0 rgba(0,0,0,.35); color: var(--butter); }
+    .tag { font-style: italic; opacity: .85; margin: 0 0 26px; font-size: 17px; }
+    #seed-form { display: flex; gap: 10px; }
+    #seed { flex: 1; font-family: var(--serif); font-size: 16px; padding: 12px 14px; border-radius: 10px; border: 0;
+      background: var(--paper); color: var(--ink); outline: none; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+    #seed:focus { box-shadow: 0 0 0 3px var(--butter), 0 8px 24px rgba(0,0,0,.35); }
+    #seed-form .primary { background: var(--butter); color: var(--ink); }
+    #seed-form .primary:hover { background: #ffeaa0; }
+    #chips { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 14px; }
+    .chip { font-family: var(--serif); font-style: italic; font-size: 13.5px; background: rgba(255,255,255,.1); color: var(--cream);
+      padding: 7px 12px; border-radius: 999px; }
+    .chip:hover { background: rgba(255,255,255,.2); }
+    #loading { margin-top: 22px; font-family: var(--pixel); font-size: 15px; color: var(--butter); display: flex; gap: 10px; justify-content: center; align-items: center; }
+    .spinner { width: 12px; height: 12px; background: var(--butter); border-radius: 2px; animation: spin 1.1s steps(8) infinite; box-shadow: 0 0 12px var(--butter); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #gear { margin-top: 16px; background: rgba(255,255,255,.08); color: var(--cream); border: 1px solid rgba(255,255,255,.3);
+      font-size: 13px; padding: 8px 14px; border-radius: 999px; }
+    #gear:hover { background: rgba(255,255,255,.16); }
+    #gear.has-key { border-color: var(--butter); color: var(--butter); }
+    #keybox { margin-top: 18px; text-align: left; font-size: 13px; opacity: .9; }
+    #keybox label { display: block; font-family: var(--pixel); font-size: 13px; margin-bottom: 4px; }
+    #keybox input { width: 100%; font-size: 13px; padding: 8px 10px; border-radius: 8px; border: 0; background: rgba(255,255,255,.12); color: var(--cream); }
+    #keybox small { display: block; margin-top: 6px; opacity: .7; }
+    #source-note { font-family: var(--pixel); font-size: 12px; opacity: .6; margin-top: 12px; min-height: 16px; }
+    #keybox { margin-top: 12px; }
+
+    /* story reveal */
+    #storyreveal .title-card { width: 640px; }
+    #reveal-title { font-size: clamp(26px, 5.5vw, 40px); }
+    #reveal-hero { font-style: italic; opacity: .8; margin: 0 0 18px; }
+    #reveal-pages { text-align: left; background: var(--paper); color: var(--ink); border-radius: 12px; padding: 18px 24px;
+      box-shadow: 0 20px 50px rgba(0,0,0,.45); min-height: 200px; max-height: 380px; overflow: auto; font-size: 15.5px; line-height: 1.55;
+      background-image: repeating-linear-gradient(0deg, rgba(58,49,69,.025) 0 1px, transparent 1px 7px); }
+    #reveal-pages p { margin: 0 0 12px; }
+    #reveal-pages p .pg { font-family: var(--pixel); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); display: block; }
+    #reveal-actions { margin-top: 18px; }
+    #reveal-actions .primary { background: var(--butter); color: var(--ink); }
+
+    /* fireflies (CSS) */
+    .fly { position: absolute; width: 4px; height: 4px; border-radius: 50%; background: var(--butter); box-shadow: 0 0 10px 2px rgba(247,224,138,.7);
+      opacity: 0; animation: fly 9s ease-in-out infinite; pointer-events: none; }
+    @keyframes fly { 0% { transform: translate(0,0); opacity: 0; } 15% { opacity: .9; } 50% { transform: translate(var(--dx), var(--dy)); opacity: .5; }
+      85% { opacity: .9; } 100% { transform: translate(0,0); opacity: 0; } }
+
+    #end .title-card p { font-size: 18px; line-height: 1.6; opacity: .9; }
+    #end-actions { display: flex; gap: 10px; justify-content: center; margin-top: 14px; }
+    #end-actions .primary { background: var(--butter); color: var(--ink); }
+    #end-actions button:not(.primary) { background: rgba(255,255,255,.12); color: var(--cream); }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="board">
+    <div id="stage">
+      <div id="game"></div>
+      <div id="bubble"></div>
+      <div id="narration" class="hidden">
+        <div id="narration-page">Page 1 of 4</div>
+        <p id="narration-text"></p>
+        <div id="narration-hint">arrows / WASD to walk · M to mute · walk off the right edge to turn the page →</div>
+      </div>
+      <div id="fade"></div>
+    </div>
+    <aside id="sidebar" class="hidden">
+      <div class="side-head"><div id="side-page">Page 1 of 4</div><div id="side-mood">Night · Dark grass</div></div>
+      <p id="side-text"></p>
+      <div id="side-hint">A sketch to start from. Add, erase, or sketch again. ✦ = story picks.</div>
+      <div id="palette"></div>
+      <div class="side-actions"><button id="btn-undo">Undo</button><button id="btn-sketch">✦ Sketch again</button><button id="btn-clear">Clear</button></div>
+      <button id="btn-walk" class="primary">Walk in →</button>
+    </aside>
+    </div>
+  </div>
+
+  <div id="title" class="overlay">
+    <div class="title-card">
+      <h1>Storybook Walk</h1>
+      <p class="tag">Tell me a story. Paint it. Then walk inside.</p>
+      <form id="seed-form" autocomplete="off">
+        <input id="seed" placeholder="a fox who is afraid of the dark" maxlength="120" />
+        <button class="primary" type="submit">Begin</button>
+      </form>
+      <div id="chips">
+        <button type="button" class="chip">a fox who is afraid of the dark</button>
+        <button type="button" class="chip">a rabbit who wants to see the sea</button>
+        <button type="button" class="chip">a bear who lost her favourite song</button>
+        <button type="button" class="chip">an owl who wakes up at noon</button>
+      </div>
+      <div id="loading" class="hidden"><span class="spinner"></span><span id="loading-text">Dreaming up your story…</span></div>
+      <div id="source-note"></div>
+      <button id="gear" type="button" title="Add an Anthropic API key so Claude writes new stories">⚙ Add API key (optional)</button>
+      <div id="keybox" class="hidden">
+        <label for="apikey">Anthropic API key (optional)</label>
+        <input id="apikey" type="password" placeholder="sk-ant-…" />
+        <small>Kept only in this browser. Without a key, a built-in story is used and props speak generic lines.</small>
+      </div>
+    </div>
+  </div>
+
+  <div id="storyreveal" class="overlay hidden">
+    <div class="title-card">
+      <h1 id="reveal-title">Title</h1>
+      <p id="reveal-hero">a story about…</p>
+      <div id="reveal-pages"></div>
+      <div id="reveal-actions"><button id="btn-paint" class="primary">Start painting →</button></div>
+    </div>
+  </div>
+
+  <div id="end" class="overlay hidden">
+    <div class="title-card">
+      <h1 id="end-title">The End</h1>
+      <p id="end-text"></p>
+      <div id="end-actions"><button id="btn-again" class="primary">Walk it again</button><button id="btn-new">New story</button></div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
