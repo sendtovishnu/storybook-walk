@@ -2,6 +2,8 @@
 
 Tell me a story. Paint it. Then walk inside.
 
+**Play it:** https://sendtovishnu.github.io/storybook-walk/ · **Source:** https://github.com/sendtovishnu/storybook-walk
+
 A cozy pixel-art game built for the **Delight** track. Claude writes a four-page
 children's story from a one-line seed, you paint each page with a tile palette,
 then you walk the hero through the scenes you painted while the story narrates
