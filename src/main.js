@@ -2,7 +2,7 @@
 import Phaser from 'phaser';
 import { TILES } from './palette.js';
 import { drawTileToCanvas } from './tiles.js';
-import { generateStory } from './story.js';
+import { generateStory, diagnostics } from './story.js';
 import { app, newPages, save, load, clearSaved, loadKey, saveKey, goPaint, goExplore } from './app.js';
 import { $, show, hide, typewriter, makeFireflies, fitBoard } from './ui.js';
 import Boot from './scenes/Boot.js';
@@ -52,13 +52,13 @@ async function begin(seed) {
   show($('#loading'));
   $('#loading-text').textContent = app.apiKey ? 'Dreaming up your story…' : 'Opening a favourite story…';
   $('#seed-form button').disabled = true;
-  const { story, source, error } = await generateStory(seed, app.apiKey);
+  const { story, source, error, model } = await generateStory(seed, app.apiKey);
   hide($('#loading'));
   $('#seed-form button').disabled = false;
   app.story = story; app.source = source; app.pages = newPages(story); app.pageIndex = 0;
   save();
   const why = !error ? '' : /401|authentication/i.test(error) ? 'the API key was rejected' : /timeout|timed out/i.test(error) ? 'Claude took too long' : /refus/i.test(error) ? 'Claude declined this one' : 'Claude was unreachable';
-  $('#source-note').textContent = source === 'claude' ? 'written just now by Claude' : (error ? `${why} — using a built-in story` : 'built-in story (add a key for a new one)');
+  $('#source-note').textContent = source === 'claude' ? `written just now by ${model || 'Claude'}` : (error ? `${why} — using a built-in story (${error})` : 'built-in story (add a key for a new one)');
   revealStory();
 }
 
@@ -86,6 +86,7 @@ async function revealStory() {
 
 function wireTitle() {
   makeFireflies($('#title'), 18);
+  document.addEventListener('storybook:log', (e) => { if (!$('#loading').classList.contains('hidden')) $('#loading-text').textContent = String(e.detail).replace('[storybook] ', ''); });
   makeFireflies($('#storyreveal'), 10);
   makeFireflies($('#end'), 14);
   $('#seed-form').addEventListener('submit', (e) => { e.preventDefault(); begin($('#seed').value); });
@@ -115,7 +116,7 @@ buildPalette();
 wireTitle();
 fitBoard(app.game);
 window.addEventListener('resize', () => fitBoard(app.game));
-window.storybook = { app, goPaint, goExplore }; // handy for demos and debugging
+window.storybook = { app, goPaint, goExplore, diagnostics }; // handy for demos and debugging
 // Cross-world hook for tooling: document.dispatchEvent(new CustomEvent('storybook:page', { detail: { mode: 'paint', index: 1 } }))
 document.addEventListener('storybook:page', (e) => {
   const { mode, index } = e.detail || {};

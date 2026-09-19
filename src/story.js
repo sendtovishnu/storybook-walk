@@ -187,25 +187,76 @@ function sanitizeStory(raw) {
   const color = typeof story.hero.color === 'string' && HEX_RE.test(story.hero.color.trim())
     ? story.hero.color.trim().toLowerCase()
     : DEFAULT_HERO.color;
-  const pages = story.pages.slice(0, 4).map((p) => ({
+  const pages = story.pages.slice(0, 6).map((p) => ({
     ...p,
     suggestedProps: Array.from(new Set((p.suggestedProps || []).filter((id) => TILE_IDS.includes(id)))),
   }));
-  if (pages.length !== 4) throw new Error(`expected 4 pages, got ${pages.length}`);
+  if (pages.length < 2) throw new Error(`expected at least 2 pages, got ${pages.length}`);
   return { ...story, hero: { ...story.hero, color }, pages };
 }
 
-function makeClient(apiKey) {
-  return new Anthropic({ apiKey, dangerouslyAllowBrowser: true, timeout: 20000, maxRetries: 1 });
+// Which model to ask, in order. A rejected beta flag, a model the account cannot use, or a
+// timeout moves on to the next entry instead of silently falling back to the canned story.
+const ATTEMPTS = [
+  { model: 'claude-opus-5', betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default', effort: 'low', timeout: 60000 },
+  { model: 'claude-opus-5', effort: 'low', timeout: 60000 },
+  { model: 'claude-sonnet-5', effort: 'low', timeout: 45000 },
+  { model: 'claude-haiku-4-5', timeout: 30000 },
+];
+
+export const diagnostics = { last: null, log: [] };
+function note(msg) {
+  const line = `[storybook] ${msg}`;
+  diagnostics.log.push(line);
+  if (diagnostics.log.length > 40) diagnostics.log.shift();
+  console.info(line);
+  if (typeof document !== 'undefined') document.dispatchEvent(new CustomEvent('storybook:log', { detail: line }));
+}
+
+export function makeClient(apiKey) {
+  return new Anthropic({ apiKey, dangerouslyAllowBrowser: true, maxRetries: 0 });
 }
 
 function tileListForPrompt() {
   return TILES.map((t) => `- ${t.id}: ${t.desc}`).join('\n');
 }
 
-function errorMessage(err) {
+function errorMessage(err, max = 80) {
   const msg = err && err.message ? String(err.message) : String(err);
-  return msg.length > 80 ? msg.slice(0, 77) + '...' : msg;
+  return msg.length > max ? msg.slice(0, max - 3) + '...' : msg;
+}
+
+const isTimeout = (err) => /timeout|timed out|aborted/i.test(String(err?.name) + ' ' + String(err?.message));
+
+// One structured-output request with the fallback chain. Returns { data, model }.
+export async function callClaude({ client, system, user, schema, maxTokens, label, attempts = ATTEMPTS }) {
+  let lastErr = null;
+  for (let i = 0; i < attempts.length; i++) {
+    const a = attempts[i];
+    const params = {
+      model: a.model, max_tokens: maxTokens, system,
+      messages: [{ role: 'user', content: user }],
+      output_config: { format: zodOutputFormat(schema), ...(a.effort ? { effort: a.effort } : {}) },
+    };
+    if (a.betas) { params.betas = a.betas; params.fallbacks = a.fallbacks; }
+    const t0 = Date.now();
+    try {
+      note(`${label}: asking ${a.model}${a.betas ? ' (with server-side fallback)' : ''}…`);
+      const res = await client.beta.messages.create(params, { timeout: a.timeout });
+      if (res.stop_reason === 'refusal') throw Object.assign(new Error('declined by the safety classifier'), { status: 'refusal' });
+      const text = res.content.find((b) => b.type === 'text')?.text ?? '';
+      const data = schema.parse(JSON.parse(text));
+      note(`${label}: ${a.model} answered in ${Date.now() - t0}ms (stop=${res.stop_reason}, output tokens=${res.usage?.output_tokens ?? '?'})`);
+      return { data, model: a.model };
+    } catch (err) {
+      lastErr = err;
+      note(`${label}: ${a.model} failed after ${Date.now() - t0}ms — ${err?.status ?? err?.name ?? 'error'}: ${errorMessage(err, 220)}`);
+      if (err?.status === 401 || err?.status === 403) break;      // a bad key fails everywhere
+      if (isTimeout(err) && i < attempts.length - 1) { i = attempts.length - 2; continue; } // jump to the fastest model
+    }
+  }
+  diagnostics.last = lastErr;
+  throw lastErr;
 }
 
 // ---------------------------------------------------------------------------
@@ -237,30 +288,18 @@ Only use prop ids from the provided list, exactly as written. Write one entry pe
 
 export async function generateStory(seed, apiKey) {
   const cleanSeed = String(seed || '').trim();
-  if (!apiKey) return { story: pickCanned(cleanSeed), source: 'canned' };
-
+  if (!apiKey) { note('story: no API key, using a built-in story'); return { story: pickCanned(cleanSeed), source: 'canned' }; }
   try {
-    const client = makeClient(apiKey);
     const userPrompt =
       `Story idea: ${cleanSeed || 'a small animal goes on a gentle adventure'}\n\n` +
       'Write the 4-page storybook now.';
-
-    const res = await client.beta.messages.create({
-      model: 'claude-opus-5',
-      max_tokens: 4000,
-      betas: ['server-side-fallback-2026-07-01'],
-      fallbacks: 'default',
-      system: STORY_SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userPrompt }],
-      output_config: { effort: 'low', format: zodOutputFormat(StorySchema) },
+    const { data, model } = await callClaude({
+      client: makeClient(apiKey), system: STORY_SYSTEM_PROMPT, user: userPrompt,
+      schema: StorySchema, maxTokens: 4000, label: 'story',
     });
-
-    if (res.stop_reason === 'refusal') throw new Error('refused');
-    const text = res.content.find((b) => b.type === 'text')?.text ?? '';
-    const story = sanitizeStory(JSON.parse(text));
-    return { story, source: 'claude' };
+    return { story: sanitizeStory(data), source: 'claude', model };
   } catch (err) {
-    return { story: pickCanned(cleanSeed), source: 'canned', error: errorMessage(err) };
+    return { story: pickCanned(cleanSeed), source: 'canned', error: errorMessage(err, 220) };
   }
 }
 
@@ -278,18 +317,10 @@ export async function generatePropLines(story, pageIndex, propIds, apiKey) {
   const ids = Array.from(new Set((propIds || []).filter((id) => TILE_IDS.includes(id))));
   const fallback = { narrationIntro: '', lines: genericLinesFor(ids) };
   if (!apiKey || ids.length === 0 || !story || !story.pages || !story.pages[pageIndex]) return fallback;
-
   try {
-    const client = makeClient(apiKey);
     const page = story.pages[pageIndex];
     const allPages = story.pages.map((p, i) => `Page ${i + 1}: ${p.text}`).join('\n\n');
-    const propDescs = ids
-      .map((id) => {
-        const t = TILES.find((tile) => tile.id === id);
-        return `- ${id}: ${t ? t.desc : ''}`;
-      })
-      .join('\n');
-
+    const propDescs = ids.map((id) => { const t = TILES.find((tile) => tile.id === id); return `- ${id}: ${t ? t.desc : ''}`; }).join('\n');
     const userPrompt =
       `Storybook title: ${story.title}\n` +
       `Hero: ${story.hero.name} the ${story.hero.kind}\n\n` +
@@ -297,27 +328,14 @@ export async function generatePropLines(story, pageIndex, propIds, apiKey) {
       `Current page (${pageIndex + 1} of ${story.pages.length}), time: ${page.time}, ground: ${page.ground}:\n${page.text}\n\n` +
       `Props the player painted into this page (use ONLY these ids):\n${propDescs}\n\n` +
       'Write narrationIntro and one line per prop now.';
-
-    const res = await client.beta.messages.create({
-      model: 'claude-opus-5',
-      max_tokens: 2000,
-      betas: ['server-side-fallback-2026-07-01'],
-      fallbacks: 'default',
-      system: LINES_SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userPrompt }],
-      output_config: { effort: 'low', format: zodOutputFormat(PropLinesSchema) },
+    const { data } = await callClaude({
+      client: makeClient(apiKey), system: LINES_SYSTEM_PROMPT, user: userPrompt,
+      schema: PropLinesSchema, maxTokens: 2000, label: `prop lines p${pageIndex + 1}`,
     });
-
-    if (res.stop_reason === 'refusal') throw new Error('refused');
-    const text = res.content.find((b) => b.type === 'text')?.text ?? '';
-    const parsed = PropLinesSchema.parse(JSON.parse(text));
-
-    const lines = genericLinesFor(ids);
-    for (const entry of parsed.lines) {
-      if (ids.includes(entry.prop) && entry.line && entry.line.trim()) lines[entry.prop] = entry.line.trim();
-    }
-    return { narrationIntro: (parsed.narrationIntro || '').trim(), lines };
-  } catch {
+    const lines = { ...genericLinesFor(ids) };
+    for (const { prop, line } of data.lines || []) if (ids.includes(prop) && line) lines[prop] = line;
+    return { narrationIntro: data.narrationIntro || '', lines };
+  } catch (err) {
     return fallback;
   }
 }
