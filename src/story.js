@@ -233,8 +233,11 @@ function note(msg) {
   if (typeof document !== 'undefined') document.dispatchEvent(new CustomEvent('storybook:log', { detail: line }));
 }
 
-export function makeClient(apiKey) {
-  return new Anthropic({ apiKey, dangerouslyAllowBrowser: true, maxRetries: 0 });
+// Keys that can reach more than one workspace must name the workspace on every request.
+export function makeClient(apiKey, workspaceId) {
+  const ws = String(workspaceId || '').trim();
+  return new Anthropic({ apiKey, dangerouslyAllowBrowser: true, maxRetries: 0,
+    ...(ws ? { defaultHeaders: { 'anthropic-workspace-id': ws } } : {}) });
 }
 
 function tileListForPrompt() {
@@ -307,7 +310,7 @@ Only use prop ids from the provided list, exactly as written. Write one entry pe
 // generateStory
 // ---------------------------------------------------------------------------
 
-export async function generateStory(seed, apiKey) {
+export async function generateStory(seed, apiKey, workspaceId) {
   const cleanSeed = String(seed || '').trim();
   if (!apiKey) { note('story: no API key, using a built-in story'); return { story: pickCanned(cleanSeed), source: 'canned' }; }
   try {
@@ -315,7 +318,7 @@ export async function generateStory(seed, apiKey) {
       `Story idea: ${cleanSeed || 'a small animal goes on a gentle adventure'}\n\n` +
       'Write the 4-page storybook now.';
     const { data, model } = await callClaude({
-      client: makeClient(apiKey), system: STORY_SYSTEM_PROMPT, user: userPrompt,
+      client: makeClient(apiKey, workspaceId), system: STORY_SYSTEM_PROMPT, user: userPrompt,
       schema: StorySchema, parseSchema: LooseStorySchema, maxTokens: 4000, label: 'story',
     });
     return { story: sanitizeStory(data), source: 'claude', model };
@@ -334,7 +337,7 @@ function genericLinesFor(propIds) {
   return lines;
 }
 
-export async function generatePropLines(story, pageIndex, propIds, apiKey) {
+export async function generatePropLines(story, pageIndex, propIds, apiKey, workspaceId) {
   const ids = Array.from(new Set((propIds || []).filter((id) => TILE_IDS.includes(id))));
   const fallback = { narrationIntro: '', lines: genericLinesFor(ids) };
   if (!apiKey || ids.length === 0 || !story || !story.pages || !story.pages[pageIndex]) return fallback;
@@ -350,7 +353,7 @@ export async function generatePropLines(story, pageIndex, propIds, apiKey) {
       `Props the player painted into this page (use ONLY these ids):\n${propDescs}\n\n` +
       'Write narrationIntro and one line per prop now.';
     const { data } = await callClaude({
-      client: makeClient(apiKey), system: LINES_SYSTEM_PROMPT, user: userPrompt,
+      client: makeClient(apiKey, workspaceId), system: LINES_SYSTEM_PROMPT, user: userPrompt,
       schema: PropLinesSchema, parseSchema: LoosePropLinesSchema, maxTokens: 2000, label: `prop lines p${pageIndex + 1}`,
     });
     const lines = { ...genericLinesFor(ids) };

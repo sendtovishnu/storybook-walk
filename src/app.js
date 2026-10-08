@@ -6,6 +6,7 @@ import { $, show, hide, fade, hideBubble, fitBoard } from './ui.js';
 
 const KEY = 'storybook-walk-v1';
 const KEY_API = 'storybook-walk-key';
+const KEY_WS = 'storybook-walk-workspace';
 
 export const app = {
   game: null,
@@ -14,6 +15,7 @@ export const app = {
   pages: [],
   pageIndex: 0,
   apiKey: '',
+  workspaceId: '',
   selected: 'tree',
 };
 
@@ -58,6 +60,8 @@ export function load() {
 export function clearSaved() { try { localStorage.removeItem(KEY); } catch (e) {} }
 export function loadKey() { try { app.apiKey = localStorage.getItem(KEY_API) || ''; } catch (e) {} return app.apiKey; }
 export function saveKey(k) { app.apiKey = k.trim(); try { localStorage.setItem(KEY_API, app.apiKey); } catch (e) {} }
+export function loadWorkspace() { try { app.workspaceId = localStorage.getItem(KEY_WS) || ''; } catch (e) {} return app.workspaceId; }
+export function saveWorkspace(w) { app.workspaceId = w.trim(); try { localStorage.setItem(KEY_WS, app.workspaceId); } catch (e) {} }
 
 export const moodLabel = (page) => `${TIMES[page.time].label} · ${GROUNDS[page.ground].name}`;
 
@@ -75,7 +79,7 @@ function requestPropLines(i) {
   const sig = [...ids].sort().join(',');
   if (page.linesFor === sig) return;
   page.linesFor = sig;
-  generatePropLines(app.story, i, ids, app.apiKey).then(({ narrationIntro, lines }) => {
+  generatePropLines(app.story, i, ids, app.apiKey, app.workspaceId).then(({ narrationIntro, lines }) => {
     page.propLines = lines || {};
     page.narrationIntro = narrationIntro || '';
     page.introShown = false;

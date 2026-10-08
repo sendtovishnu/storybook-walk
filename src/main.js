@@ -3,7 +3,7 @@ import Phaser from 'phaser';
 import { TILES } from './palette.js';
 import { drawTileToCanvas } from './tiles.js';
 import { generateStory, diagnostics } from './story.js';
-import { app, newPages, save, load, clearSaved, loadKey, saveKey, goPaint, goExplore } from './app.js';
+import { app, newPages, save, load, clearSaved, loadKey, saveKey, loadWorkspace, saveWorkspace, goPaint, goExplore } from './app.js';
 import { $, show, hide, typewriter, makeFireflies, fitBoard } from './ui.js';
 import Boot from './scenes/Boot.js';
 import Paint from './scenes/Paint.js';
@@ -52,12 +52,12 @@ async function begin(seed) {
   show($('#loading'));
   $('#loading-text').textContent = app.apiKey ? 'Dreaming up your story…' : 'Opening a favourite story…';
   $('#seed-form button').disabled = true;
-  const { story, source, error, model } = await generateStory(seed, app.apiKey);
+  const { story, source, error, model } = await generateStory(seed, app.apiKey, app.workspaceId);
   hide($('#loading'));
   $('#seed-form button').disabled = false;
   app.story = story; app.source = source; app.pages = newPages(story); app.pageIndex = 0;
   save();
-  const why = !error ? '' : /401|authentication/i.test(error) ? 'the API key was rejected' : /timeout|timed out/i.test(error) ? 'Claude took too long' : /refus/i.test(error) ? 'Claude declined this one' : 'Claude was unreachable';
+  const why = !error ? '' : /401|authentication/i.test(error) ? 'the API key was rejected' : /timeout|timed out/i.test(error) ? 'Claude took too long' : /refus/i.test(error) ? 'Claude declined this one' : /workspace/i.test(error) ? 'this API key needs a workspace ID (add it under the gear)' : 'Claude was unreachable';
   $('#source-note').textContent = source === 'claude' ? `written just now by ${model || 'Claude'}` : (error ? `${why} — using a built-in story (${error})` : 'built-in story (add a key for a new one)');
   revealStory();
 }
@@ -101,6 +101,8 @@ function wireTitle() {
   refreshGear();
   $('#apikey').addEventListener('change', (e) => { saveKey(e.target.value); refreshGear(); });
   $('#apikey').addEventListener('input', (e) => { saveKey(e.target.value); refreshGear(); });
+  $('#workspace').value = loadWorkspace();
+  $('#workspace').addEventListener('input', (e) => saveWorkspace(e.target.value));
   $('#btn-paint').addEventListener('click', () => { hide($('#storyreveal')); goPaint(0); });
   $('#btn-again').addEventListener('click', () => { hide($('#end')); goExplore(0); });
   $('#btn-new').addEventListener('click', () => { hide($('#end')); clearSaved(); $('#source-note').textContent = ''; show($('#title')); });
