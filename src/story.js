@@ -48,6 +48,23 @@ export const PropLinesSchema = z.object({
   ),
 });
 
+// The SDK can only pass enums to the API as hints, so Claude sometimes answers with a value
+// that is off the list (a prop like "fireflies", a time like "evening"). Parsing with the strict
+// schemas above threw those whole stories away. These loose versions accept any string; the
+// sanitizers below then keep the valid values and swap in safe defaults for the rest.
+const LooseStorySchema = z.object({
+  title: z.string(),
+  hero: z.object({ name: z.string(), kind: z.string(), color: z.string() }),
+  pages: z.array(z.object({
+    text: z.string(), time: z.string(), ground: z.string(), suggestedProps: z.array(z.string()),
+  })),
+});
+
+const LoosePropLinesSchema = z.object({
+  narrationIntro: z.string(),
+  lines: z.array(z.object({ prop: z.string(), line: z.string() })),
+});
+
 // ---------------------------------------------------------------------------
 // Canned stories — used when there is no key, or when Claude can't answer.
 // ---------------------------------------------------------------------------
@@ -183,16 +200,19 @@ export function pickCanned(seed) {
 }
 
 function sanitizeStory(raw) {
-  const story = StorySchema.parse(raw);
+  const story = LooseStorySchema.parse(raw);
+  const kind = HERO_KINDS.includes(story.hero.kind) ? story.hero.kind : DEFAULT_HERO.kind;
   const color = typeof story.hero.color === 'string' && HEX_RE.test(story.hero.color.trim())
     ? story.hero.color.trim().toLowerCase()
     : DEFAULT_HERO.color;
   const pages = story.pages.slice(0, 6).map((p) => ({
     ...p,
+    time: TIME_KEYS.includes(p.time) ? p.time : 'day',
+    ground: GROUND_KEYS.includes(p.ground) ? p.ground : 'grass',
     suggestedProps: Array.from(new Set((p.suggestedProps || []).filter((id) => TILE_IDS.includes(id)))),
   }));
   if (pages.length < 2) throw new Error(`expected at least 2 pages, got ${pages.length}`);
-  return { ...story, hero: { ...story.hero, color }, pages };
+  return { ...story, hero: { ...story.hero, kind, color }, pages };
 }
 
 // Which model to ask, in order. A rejected beta flag, a model the account cannot use, or a
@@ -229,7 +249,8 @@ function errorMessage(err, max = 80) {
 const isTimeout = (err) => /timeout|timed out|aborted/i.test(String(err?.name) + ' ' + String(err?.message));
 
 // One structured-output request with the fallback chain. Returns { data, model }.
-export async function callClaude({ client, system, user, schema, maxTokens, label, attempts = ATTEMPTS }) {
+// `schema` is what Claude is asked to follow; `parseSchema` is what its answer must pass here.
+export async function callClaude({ client, system, user, schema, parseSchema = schema, maxTokens, label, attempts = ATTEMPTS }) {
   let lastErr = null;
   for (let i = 0; i < attempts.length; i++) {
     const a = attempts[i];
@@ -245,7 +266,7 @@ export async function callClaude({ client, system, user, schema, maxTokens, labe
       const res = await client.beta.messages.create(params, { timeout: a.timeout });
       if (res.stop_reason === 'refusal') throw Object.assign(new Error('declined by the safety classifier'), { status: 'refusal' });
       const text = res.content.find((b) => b.type === 'text')?.text ?? '';
-      const data = schema.parse(JSON.parse(text));
+      const data = parseSchema.parse(JSON.parse(text));
       note(`${label}: ${a.model} answered in ${Date.now() - t0}ms (stop=${res.stop_reason}, output tokens=${res.usage?.output_tokens ?? '?'})`);
       return { data, model: a.model };
     } catch (err) {
@@ -295,7 +316,7 @@ export async function generateStory(seed, apiKey) {
       'Write the 4-page storybook now.';
     const { data, model } = await callClaude({
       client: makeClient(apiKey), system: STORY_SYSTEM_PROMPT, user: userPrompt,
-      schema: StorySchema, maxTokens: 4000, label: 'story',
+      schema: StorySchema, parseSchema: LooseStorySchema, maxTokens: 4000, label: 'story',
     });
     return { story: sanitizeStory(data), source: 'claude', model };
   } catch (err) {
@@ -330,7 +351,7 @@ export async function generatePropLines(story, pageIndex, propIds, apiKey) {
       'Write narrationIntro and one line per prop now.';
     const { data } = await callClaude({
       client: makeClient(apiKey), system: LINES_SYSTEM_PROMPT, user: userPrompt,
-      schema: PropLinesSchema, maxTokens: 2000, label: `prop lines p${pageIndex + 1}`,
+      schema: PropLinesSchema, parseSchema: LoosePropLinesSchema, maxTokens: 2000, label: `prop lines p${pageIndex + 1}`,
     });
     const lines = { ...genericLinesFor(ids) };
     for (const { prop, line } of data.lines || []) if (ids.includes(prop) && line) lines[prop] = line;
